@@ -10,7 +10,7 @@ class Replacer {
   constructor(code, {preprocessor = false} = {}) {
     this.code = code;
 
-    if (code) {
+    if (preprocessor) {
       this.manglePreprocessor();
     }
 
