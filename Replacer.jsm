@@ -97,7 +97,7 @@ class Replacer {
     return this.code.slice(offsets.start, offsets.end);
   }
 
-  getNodeText(range) {
+  getNodeText(node) {
     return this.getText(this.getOffsets(node.loc));
   }
 

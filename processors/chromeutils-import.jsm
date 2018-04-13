@@ -22,24 +22,15 @@ const kIgnorePaths = [
   "testing/marionette/harness/marionette_harness/runner/mixins/browsermob-proxy-py/docs/_build/html/_static/jquery.js",
   "testing/marionette/atom.js",
   "browser/extensions/pocket/content/panels/js/vendor/jquery-2.1.1.min.js",
-  "servo/tests/html/webvr/js/third-party",
+  "servo/",
   "browser/extensions/pdfjs/content/web",
+  "mobile/android/tests/browser/robocop/robocop_head.js",
   "third_party",
 
   "tools/lint/eslint",
 ];
 
-
-function isIdentifier(node, id) {
-  return node && node.type === "Identifier" && node.name === id;
-}
-
-function isMemberExpression(node, object, member) {
-  return (node && node.type === "MemberExpression" &&
-          isIdentifier(node.object, object) &&
-          isIdentifier(node.property, member));
-}
-
+const {isIdentifier, isMemberExpression} = Utils;
 
 class Processor extends ProcessorBase {
   constructor(filters) {

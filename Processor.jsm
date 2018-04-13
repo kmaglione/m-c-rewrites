@@ -11,7 +11,7 @@ ChromeUtils.import("resource://rewrites/Replacer.jsm");
 Cc["@mozilla.org/jsreflect;1"].createInstance()();
 this.Reflect = Reflect;
 
-var EXPORTED_SYMBOLS = ["ProcessorBase", "Reflect"];
+var EXPORTED_SYMBOLS = ["ProcessorBase", "Reflect", "Utils"];
 
 async function readAll(pipe) {
   let result = "";
@@ -156,3 +156,15 @@ class ProcessorBase {
     }
   }
 }
+
+var Utils = {
+  isIdentifier(node, id) {
+    return node && node.type === "Identifier" && node.name === id;
+  },
+
+  isMemberExpression(node, object, member) {
+    return (node && node.type === "MemberExpression" &&
+            isIdentifier(node.object, object) &&
+            isIdentifier(node.property, member));
+  },
+};
