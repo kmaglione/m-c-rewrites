@@ -91,7 +91,7 @@ class Processor extends ProcessorBase {
             }
 
             for (let expr of func.yields) {
-              let len = (expr.delegate ? "yield" : "yield*").length;
+              let len = (expr.delegate ? "yield*" : "yield").length;
 
               let start = replacer.getOffset(expr.loc.start);
               replacer.replaceOffsets({start, end: start + len}, "await");

@@ -6,6 +6,14 @@ var EXPORTED_SYMBOLS = ["Replacer"];
 
 const PLACEHOLDER = "//SourceRewriterPreprocessorMacro-#";
 
+let compareReplacements = (a, b) => a.start - b.start || b.end - a.end;
+
+const FUNC_TYPES = new Set([
+  "ArrowFunctionExpression",
+  "FunctionDeclaration",
+  "FunctionExpression",
+]);
+
 class Replacer {
   constructor(code, {preprocessor = false} = {}) {
     this.code = code;
@@ -20,9 +28,13 @@ class Replacer {
       this.lineOffsets.push(re.lastIndex);
     }
 
+    this.functions = [];
+
     this.replacements = [];
 
     this.preprocessor = preprocessor;
+
+    this.skippedReplacements = 0;
   }
 
   manglePreprocessor() {
@@ -38,7 +50,7 @@ class Replacer {
   }
 
   applyChanges() {
-    this.replacements.sort((a, b) => a.start - b.start || b.end - a.end);
+    this.replacements.sort(compareReplacements);
 
     let parts = [];
     let offset = 0;
@@ -49,19 +61,122 @@ class Replacer {
       offset = end;
     };
 
+    let insert = ({start, end}, text) => {
+      fillGap(start);
+      parts.push(text);
+      offset = end;
+    };
+
     for (let {offsets, text} of this.replacements) {
       if (offsets.start < offset) {
+        this.skippedReplacements++;
         continue;
       }
 
-      fillGap(offsets.start);
-      parts.push(text);
+      if (Array.isArray(text)) {
+        for (let repl of text) {
+          insert(repl.offsets, repl.text);
+        }
+      } else {
+        insert(offsets, text);
+      }
 
-      offset = offsets.end;
     }
     fillGap(this.code.length);
 
     return this.demanglePreprocessor(parts.join(""));
+  }
+
+  addFunction(node) {
+    let {start, end} = this.getOffsets(node.body.loc);
+
+    this.functions.push({start, end, node});
+  }
+
+  getFunction(node) {
+    this.functions.sort((a, b) => a.start - b.start);
+
+    let {start, end} = this.getOffsets(node.loc);
+    let closest;
+    for (let func of this.functions) {
+      if (start >= func.start && end <= func.end) {
+        closest = func.node;
+      }
+    }
+    return closest;
+  }
+
+  makeAsync(func) {
+    if (!func.async) {
+      func.async = true;
+      func.notAsyncYet = true;
+
+      let {start} = this.getFuncDeclOffsets(func);
+      this.insertAt(start, "async ");
+    }
+  }
+
+  getFuncDeclOffsets(func) {
+    let end;
+    if (func.id) {
+      end = this.getOffset(func.loc.start);
+    } else {
+      end = this.getOffset(func.loc.start);
+      while (/\s/.test(this.code[end])) {
+        end++;
+      }
+    }
+
+    let start = end;
+    if (func.type === "ArrowFunctionExpression") {
+      start++;
+      end++;
+      if (/\s/.test(this.code[start])) {
+        start++;
+        end++;
+      }
+    } else {
+      if (func.id || func.generator) {
+        start -= "function".length;
+      }
+      if (func.generator) {
+        start -= "*".length;
+      }
+
+      while (this.code[start] !== "f") {
+        start--;
+      }
+
+      let re = /function(\s*\* )?\s*/y;
+      re.lastIndex = start;
+      let match = re.exec(this.code);
+      if (!match || start + match[0].length != end) {
+        start = end;
+      }
+    }
+
+    if (func.async && !func.notAsyncYet) {
+      start -= "async ".length;
+      while (this.code[start] !== "a") {
+        start--;
+      }
+    }
+
+    return {start, end};
+  }
+
+  getNodeStart(node) {
+    if (FUNC_TYPES.has(node.type)) {
+      return this.getFuncDeclOffsets(node).start;
+    }
+    return this.getOffset(node.loc.start);
+  }
+
+  getNodeOffsets(node) {
+    return {
+      start: this.getNodeStart(node),
+      end: this.getOffset(node.loc.end),
+    };
   }
 
   getOffset(loc) {
@@ -69,14 +184,19 @@ class Replacer {
   }
 
   getOffsets(range) {
+    if (Array.isArray(range)) {
+      return {
+        start: this.getNodeStart(range[0]),
+        end: this.getOffset(range[range.length - 1].loc.end),
+      };
+    }
     return {start: this.getOffset(range.start), end: this.getOffset(range.end)};
   }
 
   getArgOffsets(node) {
-    let args = node.arguments;
+    let args = node.arguments || node.params;
     if (args.length) {
-      return this.getOffsets({start: args[0].loc.start,
-                              end: args[args.length - 1].loc.end});
+      return this.getOffsets(args);
     }
 
     let start = this.getOffset(node.callee.loc.end) + 1;
@@ -98,11 +218,11 @@ class Replacer {
   }
 
   getNodeText(node) {
-    return this.getText(this.getOffsets(node.loc));
+    return this.getText(this.getNodeOffsets(node));
   }
 
   replace(node, text) {
-    this.replaceOffsets(this.getOffsets(node.loc),
+    this.replaceOffsets(this.getNodeOffsets(node),
                         text);
   }
 
@@ -117,19 +237,28 @@ class Replacer {
     });
   }
 
+  insertAt(offset, text) {
+    this.replaceOffsets({start: offset, end: offset},
+                        text);
+  }
+
   replaceCallee(node, callee, args = null) {
-    if (callee.includes("\n")) {
-      throw new Error("Multi-line call expressions not supported");
+    if (callee && callee.includes("\n")) {
+      throw new Error(`Multi-line call expressions not supported: ${JSON.stringify(callee)}`);
     }
 
-    this.replace(node.callee, callee);
+    if (callee) {
+      this.replace(node.callee, callee);
+    } else {
+      callee = this.getNodeText(node.callee);
+    }
 
     let args_ = node.arguments;
-    if (!args && (!args_.length ||
-                  args_[0].loc.start.line === args_[args_.length - 1].loc.end.line)) {
+    if (args == null && (!args_.length ||
+                         args_[0].loc.start.line === args_[args_.length - 1].loc.end.line)) {
       return;
     }
-    if (!args) {
+    if (args == null) {
       args = this.getArgText(node);
     }
 
@@ -152,6 +281,26 @@ class Replacer {
                         "\n" + newSpaces);
 
     this.replaceArgs(node, args);
+  }
+
+  /**
+   * Groups all replacements made by the given callback so that, in the
+   * case of conflict, all of none of the replacements take place.
+   * Replacements generated by the callback must not conflict.
+   */
+  groupReplacements(callback) {
+    let start = this.replacements.length;
+
+    let result = callback();
+
+    let replacements = this.replacements.splice(start).sort(compareReplacements);
+    if (replacements.length) {
+      let start = replacements[0].offsets.start;
+      let end = replacements[replacements.length - 1].offsets.end;
+      this.replacements.push({offsets: {start, end}, text: replacements});
+    }
+
+    return result;
   }
 }
 

@@ -53,9 +53,18 @@ class ProcessorBase {
     if (!this.shouldProcess(file, text)) {
       return null;
     }
-    let replacer = new Replacer(text, {preprocessor: true});
-    this.process(file, replacer);
-    return replacer.applyChanges();
+    for (let again = true; again;) {
+      let replacer = new Replacer(text, {preprocessor: true});
+      this.process(file, replacer);
+      text = replacer.applyChanges();
+
+      again = replacer.skippedReplacements > 0;
+      if (again) {
+        const S = replacer.skippedReplacements === 1 ? "" : "S";
+        dump(`SKIPPED ${replacer.skippedReplacements} REPLACEMENT${S} IN ${file}; REPEATING\n`);
+      }
+    }
+    return text;
   }
 
   processRegExp(file, text, pattern,
@@ -158,6 +167,23 @@ class ProcessorBase {
 }
 
 var Utils = {
+  getMemberExpression(node) {
+    let path = [];
+    while (node) {
+      if (node.type === "Identifier") {
+        path.push(node.name);
+      } else if (node.type === "MemberExpression") {
+        if (node.property && node.property.type === "Identifier") {
+          path.push(node.property.name);
+        }
+        node = node.object;
+        continue;
+      }
+      break;
+    }
+    return path.reverse();
+  },
+
   isIdentifier(node, id) {
     return node && node.type === "Identifier" && node.name === id;
   },
