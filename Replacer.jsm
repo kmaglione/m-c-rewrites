@@ -14,6 +14,49 @@ const FUNC_TYPES = new Set([
   "FunctionExpression",
 ]);
 
+var Utils = {
+  getMemberExpression(node) {
+    let path = [];
+    while (node) {
+      if (node.type === "Identifier") {
+        path.push(node.name);
+      } else if (node.type === "MemberExpression") {
+        if (node.property && node.property.type === "Identifier") {
+          path.push(node.property.name);
+        }
+        node = node.object;
+        continue;
+      }
+      break;
+    }
+    return path.reverse();
+  },
+
+  isIdentifier(node, id) {
+    return node && node.type === "Identifier" && node.name === id;
+  },
+
+  isMemberExpression(node, object, member) {
+    return (node && node.type === "MemberExpression" &&
+            Utils.isIdentifier(node.object, object) &&
+            Utils.isIdentifier(node.property, member));
+  },
+};
+
+function getCallback(node) {
+  if (!node) {
+    return null;
+  }
+
+  if (node.type === "CallExpression" && Utils.isIdentifier(node.callee, "callback_soon")) {
+    node = node.arguments[0];
+  }
+  if (["FunctionExpression", "ArrowFunctionExpression"].includes(node.type)) {
+    return node;
+  }
+  return null;
+}
+
 class Replacer {
   constructor(code, {preprocessor = false} = {}) {
     this.code = code;
@@ -114,6 +157,78 @@ class Replacer {
       let {start} = this.getFuncDeclOffsets(func);
       this.insertAt(start, "async ");
     }
+  }
+
+  promisifyFunction(node, callbackIndex, callee = null) {
+    let outer = this.getFunction(node);
+    let callback = getCallback(node.arguments[callbackIndex]);
+    if (!outer || !callback || callback.body.type !== "BlockStatement") {
+      return;
+    }
+
+    let {start, end} = this.getOffsets(node.loc);
+    if (this.getText({start: end, end: end + 2}) != ";\n") {
+      return;
+    }
+
+    this.groupReplacements(() => {
+      this.makeAsync(outer);
+
+      let preface;
+      if (callback.params.length) {
+        let param = this.getArgText(callback);
+
+        let found = false;
+        for (let fn = outer; fn && !found; fn = this.getFunction(fn)) {
+          found = Utils.isIdentifier(fn.params[0], param)
+        }
+
+        if (found) {
+          preface =  `${param} = await `;
+        } else {
+          preface =  `let ${param} = await `;
+        }
+      } else {
+        preface = `await `;
+      }
+
+      let skipCallbackArg = callee != null;
+      if (callee == null) {
+        callee = this.getNodeText(node.callee);
+      }
+
+      {
+        let params = [];
+        for (let [i, param] of node.arguments.entries()) {
+          if (i === callbackIndex) {
+            if (!skipCallbackArg) {
+              params.push("null");
+            }
+          } else {
+            params.push(this.getNodeText(param))
+          }
+        }
+        if (node.arguments.length <= callbackIndex + 1) {
+          params = params.slice(0, callbackIndex);
+        }
+
+        this.replaceCallee(node, preface + callee, params.join(", "));
+      }
+
+      let {body} = callback.body;
+      let bodyText = this.getText(this.getOffsets(body));
+
+      // Because everything is terrible.
+      let diff = this.getOffset(body[0].loc.start) - this.getNodeStart(body[0]);
+
+      let oldIndent = " ".repeat(body[0].loc.start.column - diff);
+      let newIndent = " ".repeat(node.loc.start.column);
+      if (oldIndent.length > newIndent.length) {
+        bodyText = bodyText.replace(new RegExp(`^${oldIndent}`, "gm"), newIndent);
+      }
+
+      this.insertAt(end + 2, `${newIndent}${bodyText}\n`);
+    });
   }
 
   getFuncDeclOffsets(func) {
@@ -304,3 +419,4 @@ class Replacer {
   }
 }
 
+Replacer.Utils = Utils;

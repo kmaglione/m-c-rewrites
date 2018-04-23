@@ -24,7 +24,7 @@ async function main(scriptdir, script, ...args) {
 
 let done = false;
 main(...arguments).catch(e => {
-  dump(`Error: ${e}\n${e.stack}\n`);
+  dump(`Error: ${e.filename || e.fileName}:${e.lineNumber}: ${e}\n${e.stack}\n`);
 }).then(() => {
   done = true;
 });

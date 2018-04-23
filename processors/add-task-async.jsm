@@ -3,6 +3,7 @@
 var {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
 ChromeUtils.import("resource://rewrites/Processor.jsm");
+ChromeUtils.import("resource://rewrites/Replacer.jsm");
 
 var EXPORTED_SYMBOLS = ["Processor"];
 
@@ -30,7 +31,7 @@ const kIgnorePaths = [
   "tools/lint/eslint",
 ];
 
-const {isIdentifier} = Utils;
+const {isIdentifier} = Replacer.Utils;
 
 function stealChildren(replacer, func, nodes) {
   let start = replacer.getOffset(func.body.loc.start);

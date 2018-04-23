@@ -3,6 +3,7 @@
 var {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
 ChromeUtils.import("resource://rewrites/Processor.jsm");
+ChromeUtils.import("resource://rewrites/Replacer.jsm");
 
 var EXPORTED_SYMBOLS = ["Processor"];
 
@@ -32,7 +33,7 @@ const kIgnorePaths = [
   "toolkit/mozapps/extensions/content/extensions.xml",
 ];
 
-const {getMemberExpression, isIdentifier} = Utils;
+const {getMemberExpression} = Replacer.Utils;
 
 const callbackMethods = {
   getActiveAddons: 1,
@@ -53,93 +54,6 @@ const callbackFunctions = {
   installAllFiles: [1, "promiseInstallAllFiles"],
 };
 
-function stealChildren(replacer, func, nodes) {
-  let start = replacer.getOffset(func.body.loc.start);
-
-  let children = [];
-  nodes = nodes.filter(node => {
-    if (replacer.getOffset(node.loc.start) >= start) {
-      children.push(node);
-      return false;
-    }
-    return true;
-  });
-
-  return [nodes, children];
-}
-
-function getCallback(node) {
-  if (!node) {
-    return null;
-  }
-
-  if (node.type === "CallExpression" && isIdentifier(node.callee, "callback_soon")) {
-    node = node.arguments[0];
-  }
-  if (["FunctionExpression", "ArrowFunctionExpression"].includes(node.type)) {
-    return node;
-  }
-  return null;
-}
-
-function promisifyFunction(replacer, node, callbackIndex, callee = null) {
-  let outer = replacer.getFunction(node);
-  let callback = getCallback(node.arguments[callbackIndex]);
-  if (!outer || !callback || callback.body.type !== "BlockStatement") {
-    return;
-  }
-
-  let {start, end} = replacer.getOffsets(node.loc);
-  if (replacer.getText({start: end, end: end + 2}) != ";\n") {
-    return;
-  }
-
-  replacer.groupReplacements(() => {
-    replacer.makeAsync(outer);
-
-    let preface;
-    {
-      if (callback.params.length) {
-        let param = replacer.getArgText(callback);
-        preface =  `let ${param} = await `;
-      } else {
-        preface = `await `;
-      }
-    }
-
-    if (callee == null) {
-      callee = replacer.getNodeText(node.callee);
-    }
-
-    {
-      let params = [];
-      for (let [i, param] of node.arguments.entries()) {
-        if (i === callbackIndex) {
-          params.push("null");
-        } else {
-          params.push(replacer.getNodeText(param))
-        }
-      }
-      if (node.arguments.length <= callbackIndex + 1) {
-        params = params.slice(0, callbackIndex);
-      }
-
-      replacer.replaceCallee(node, preface + callee, params.join(", "));
-    }
-
-    let {body} = callback.body;
-    let bodyText = replacer.getText(replacer.getOffsets(body));
-
-    let oldIndent = " ".repeat(body[0].loc.start.column);
-    let newIndent = " ".repeat(node.loc.start.column);
-    if (oldIndent.length > newIndent.length) {
-      bodyText = bodyText.replace(new RegExp(`^${oldIndent}`, "gm"), newIndent);
-    }
-
-    replacer.insertAt(end + 2, `${newIndent}${bodyText}\n`);
-  });
-}
-
 class Processor extends ProcessorBase {
   constructor(filters) {
     super(kIgnorePaths, filters.length ? filters : null);
@@ -155,8 +69,6 @@ class Processor extends ProcessorBase {
     Reflect.parse(replacer.code, {
       source: path,
       builder: {
-        yields: [],
-
         callExpression(callee, args, loc) {
           let node = {type: "CallExpression", callee, arguments: args, loc};
 
@@ -186,9 +98,6 @@ class Processor extends ProcessorBase {
           }
 
           let node = {type, id, params, body, generator, expression, loc, async: isAsync, rest};
-          if (generator) {
-            [this.yields, node.yields] = stealChildren(replacer, node, this.yields);
-          }
           replacer.addFunction(node);
           return node;
         },
@@ -202,17 +111,11 @@ class Processor extends ProcessorBase {
         arrowFunctionExpression(id, params, body, generator, expression, isAsync, rest, loc) {
           return this._function("ArrowFunctionExpression", id, params, body, generator, expression, isAsync, rest, loc);
         },
-
-        yieldExpression(argument, delegate, loc) {
-          let node = {loc, type: "YieldExpression", argument, delegate};
-          this.yields.push(node);
-          return node;
-        },
       },
     });
 
     for (let {node, callbackIndex, callee} of callbacks) {
-      promisifyFunction(replacer, node, callbackIndex, callee);
+      replacer.promisifyFunction(node, callbackIndex, callee);
     }
   }
 }

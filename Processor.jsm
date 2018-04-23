@@ -55,8 +55,15 @@ class ProcessorBase {
     }
     for (let again = true; again;) {
       let replacer = new Replacer(text, {preprocessor: true});
-      this.process(file, replacer);
-      text = replacer.applyChanges();
+
+      try {
+        this.process(file, replacer);
+
+        text = replacer.applyChanges();
+      } catch (e) {
+        dump(`==== BEGIN SCRIPT TEXT ====\n${text}==== END SCRIPT TEXT ====\n`);
+        throw e;
+      }
 
       again = replacer.skippedReplacements > 0;
       if (again) {
@@ -81,7 +88,7 @@ class ProcessorBase {
           }
         } catch (e) {
           dump(`FAILED TO PROCESS PART OF FILE ${file}\n`);
-          dump(`Error: ${e}\n${e.stack}\n`);
+          dump(`Error: ${e.fileName}:${e.lineNumber}: ${e}\n${e.stack}\n`);
         }
       }
       return m0;
@@ -128,7 +135,7 @@ class ProcessorBase {
         await this.processFile(path);
       } catch (e) {
         dump(`FAILED TO PROCESS FILE ${path}\n`);
-        dump(`Error: ${e}\n${e.stack}\n`);
+        dump(`Error: ${e.fileName}:${e.lineNumber}: ${e}\n${e.stack}\n`);
       }
     }
   }
@@ -165,32 +172,3 @@ class ProcessorBase {
     }
   }
 }
-
-var Utils = {
-  getMemberExpression(node) {
-    let path = [];
-    while (node) {
-      if (node.type === "Identifier") {
-        path.push(node.name);
-      } else if (node.type === "MemberExpression") {
-        if (node.property && node.property.type === "Identifier") {
-          path.push(node.property.name);
-        }
-        node = node.object;
-        continue;
-      }
-      break;
-    }
-    return path.reverse();
-  },
-
-  isIdentifier(node, id) {
-    return node && node.type === "Identifier" && node.name === id;
-  },
-
-  isMemberExpression(node, object, member) {
-    return (node && node.type === "MemberExpression" &&
-            isIdentifier(node.object, object) &&
-            isIdentifier(node.property, member));
-  },
-};

@@ -31,7 +31,7 @@ const kIgnorePaths = [
   "tools/lint/eslint",
 ];
 
-const {isIdentifier, isMemberExpression} = Replacer.Utils;
+const {isMemberExpression} = Replacer.Utils;
 
 class Processor extends ProcessorBase {
   constructor(filters) {
@@ -39,7 +39,7 @@ class Processor extends ProcessorBase {
   }
 
   shouldProcess(path, text) {
-    return /\b(?:Cu\.import|Components\.utils\.import|XPCOMUtils\.defineLazyModuleGetter)\(/.test(text);
+    return /\bXPCOMUtils\.generateQI\b/.test(text);
   }
 
   process(path, replacer) {
@@ -49,14 +49,19 @@ class Processor extends ProcessorBase {
         callExpression: function(callee, args, loc) {
           let node = {type: "CallExpression", callee, arguments: args, loc};
 
-          let isCu = (!path.startsWith("devtools/") && isIdentifier(callee.object, "Cu") ||
-                      isMemberExpression(callee.object, "Components", "utils"));
+          if (isMemberExpression(callee, "XPCOMUtils", "generateQI")) {
+            let ifaces = node.arguments[0].elements;
+            if (ifaces) {
+              let filtered = ifaces.filter(elt => !isMemberExpression(elt, "Ci", "nsISupports"));
 
-          if (isCu && isIdentifier(callee.property, "import")) {
-            replacer.replaceCallee(node, "ChromeUtils.import");
-          } else if (isMemberExpression(callee, "XPCOMUtils", "defineLazyModuleGetter") &&
-                     node.arguments.length < 4) {
-            replacer.replaceCallee(node, "ChromeUtils.defineModuleGetter");
+              let newArgs;
+              if (filtered.length < ifaces.length) {
+                let strings = filtered.map(node => replacer.getNodeText(node));
+                newArgs = `[${strings.join(", ")}]`;
+              }
+
+              replacer.replaceCallee(node, "ChromeUtils.generateQI", newArgs);
+            }
           }
 
           return node;
