@@ -25,7 +25,6 @@ const kIgnorePaths = [
   "browser/extensions/pocket/content/panels/js/vendor/jquery-2.1.1.min.js",
   "servo/",
   "browser/extensions/pdfjs/content/web",
-  "mobile/android/tests/browser/robocop/robocop_head.js",
   "third_party",
 
   "tools/lint/eslint",

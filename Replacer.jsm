@@ -67,7 +67,7 @@ class Replacer {
 
     this.lineOffsets = [0];
     let re = /.*?\n|.+?$/g;
-    while (re.exec(code)) {
+    while (re.exec(this.code)) {
       this.lineOffsets.push(re.lastIndex);
     }
 
